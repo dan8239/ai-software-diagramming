@@ -1,0 +1,3 @@
+pylint>=3.0          # provides pyreverse for class diagrams
+pydeps>=3.0          # module-level dependency graph
+gitpython>=3.1       # programmatic git clone
