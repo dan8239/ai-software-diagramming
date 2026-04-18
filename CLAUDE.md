@@ -56,19 +56,30 @@ The user drives this with slash commands. Order is **bottom-up**: L4 → L1.
   If not installed, ask the user before installing it. Mermaid output is the
   intermediate format the Lucid MCP consumes.
 
-## Publishing to Lucid
+## Publishing
 
-After the user is happy with a level, use the **Lucid MCP server** (configured
-in `.mcp.json`) to push the corresponding view:
+The default publisher is **offline `.drawio` file generation** — it needs no
+OAuth, produces editable files, and Lucid imports `.drawio` natively.
 
-- For L1/L2: use Lucid's `create_diagram` (or equivalent) with the C4 Mermaid
-  view — these are small enough that native Lucid shapes are worth it.
-- For L3/L4: ask the user whether they want native Lucid shapes (slower, fully
-  editable) or rendered Mermaid (fast, post-edit limited). Default: native for
-  L3, Mermaid-rendered for L4.
+```bash
+python scripts/render_drawio.py --yes   # out/drawio/*.drawio
+```
 
-If Lucid MCP fails or the user prefers, fall back to the **draw.io MCP** (also
-in `.mcp.json`) and produce a `.drawio` file in `out/`.
+`/publish` accepts `drawio` (default), `lucid`, or `mermaid`:
+
+- **drawio**: writes `out/drawio/<viewKey>.drawio`. Open in draw.io desktop/
+  web, or import into Lucid via `File > Import > draw.io`.
+- **lucid**: requires Lucid MCP (`mcp__lucid__*` tools). Confirm target doc
+  name with the user; default to native shapes for L1/L2, ask for L3/L4.
+- **mermaid**: emits `out/views/structurizr-<Lx>.mmd` for paste-into-Lucid
+  or Markdown embedding.
+
+For L4 class diagrams (Structurizr doesn't model them), publish
+`out/views/L4_*.mmd` as Mermaid — Lucid and draw.io both render Mermaid
+class diagrams directly.
+
+Never push silently to a hosted tool — always confirm the target document
+with the user before calling a `create` MCP tool.
 
 ## Quality bar
 
