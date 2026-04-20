@@ -75,6 +75,7 @@ class Unit:
     package_name: str      # import-path / npm name / python dist name
     component_dirs: list[str] = field(default_factory=list)
     files: int = 0
+    deployable: bool = False   # has Dockerfile/main/entrypoint/start-script
 
 
 def _read_go_mod(path: Path) -> str | None:
@@ -174,6 +175,7 @@ def detect_units(src: Path) -> list[Unit]:
         files = len(_iter_files(d, SOURCE_EXTS.get(language, set()) | (
             SOURCE_EXTS["javascript"] if language == "typescript" else set()
         )))
+        deployable = _is_deployable(d, language, name)
         units.append(
             Unit(
                 id=uid,
@@ -182,6 +184,7 @@ def detect_units(src: Path) -> list[Unit]:
                 package_name=name,
                 component_dirs=components,
                 files=files,
+                deployable=deployable,
             )
         )
         unit_roots.add(d)
@@ -203,6 +206,68 @@ def detect_units(src: Path) -> list[Unit]:
     return units
 
 
+def _is_deployable(unit_dir: Path, language: str, package_name: str) -> bool:
+    """Heuristic: does this unit run as its own process?"""
+    # Dockerfile anywhere in the unit (not just root) is a strong signal
+    for df in unit_dir.rglob("Dockerfile"):
+        if not any(part in SKIP_DIRS for part in df.relative_to(unit_dir).parts):
+            return True
+
+    if language == "go":
+        if (unit_dir / "main.go").exists():
+            return True
+        cmd = unit_dir / "cmd"
+        if cmd.is_dir():
+            for sub in cmd.iterdir():
+                if sub.is_dir() and (sub / "main.go").exists():
+                    return True
+        return False
+
+    if language == "python":
+        short = package_name.split("/")[-1]
+        candidates = [
+            unit_dir / short / "__main__.py",
+            unit_dir / "src" / short / "__main__.py",
+        ]
+        if any(c.exists() for c in candidates):
+            return True
+        pyproject = unit_dir / "pyproject.toml"
+        if pyproject.exists():
+            try:
+                text = pyproject.read_text()
+                if re.search(r'^\s*\[project\.(gui-)?scripts\]', text, re.M):
+                    return True
+                if re.search(r'^\s*\[project\.entry-points\.', text, re.M):
+                    return True
+            except Exception:
+                pass
+        setup_cfg = unit_dir / "setup.cfg"
+        if setup_cfg.exists():
+            try:
+                if "console_scripts" in setup_cfg.read_text():
+                    return True
+            except Exception:
+                pass
+        return False
+
+    if language in {"typescript", "javascript"}:
+        pkg_json = unit_dir / "package.json"
+        if pkg_json.exists():
+            try:
+                data = json.loads(pkg_json.read_text())
+            except Exception:
+                return False
+            if data.get("bin"):
+                return True
+            scripts = data.get("scripts") or {}
+            for key in ("start", "dev", "serve", "preview"):
+                if key in scripts:
+                    return True
+        return False
+
+    return False
+
+
 def _add_python_fallback_unit(src: Path, pkg_dir: Path, units: list[Unit], taken: set[str]) -> None:
     uid = _unique_id(pkg_dir.name, taken)
     taken.add(uid)
@@ -215,6 +280,7 @@ def _add_python_fallback_unit(src: Path, pkg_dir: Path, units: list[Unit], taken
             package_name=pkg_dir.name,
             component_dirs=_detect_components(pkg_dir.parent, "python", pkg_dir.name),
             files=len(_iter_files(pkg_dir, SOURCE_EXTS["python"])),
+            deployable=_is_deployable(pkg_dir.parent, "python", pkg_dir.name),
         )
     )
 

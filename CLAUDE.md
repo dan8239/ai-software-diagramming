@@ -19,9 +19,24 @@ The extractor identifies **units** — dirs that declare their own identity:
 | `pyproject.toml` | Python dist       | `[project].name`               |
 | `setup.py`/`.cfg`| Python dist       | dir name (fallback)            |
 
-Each unit becomes one Structurizr **container** in the seed. Cross-unit
-imports become container-to-container relationships. External imports
-(third-party libs) are listed per-unit for the L1 refinement step.
+Each unit becomes one Structurizr **container** in the seed, **except**:
+
+- **Non-deployable libraries with exactly one consumer are collapsed**
+  into that consumer — their components become components of the
+  consumer's container (labelled `Merged from <lib> library`).
+- **Shared libraries** (non-deployable, imported by >1 consumer) stay
+  as their own container with a `Shared Library` tag.
+- **Deployable services** (Dockerfile / `main.go` / `__main__.py` / npm
+  `start`/`dev`/`bin`) always stay as their own container, tagged
+  `Service`.
+
+Cross-unit imports become container-to-container relationships, with
+edges redirected around collapsed libraries. The seeder also partitions
+L2 into per-top-level-dir views (`L2_services`, `L2_packages`, ...) plus
+a full `L2_all` when there are enough containers to warrant it.
+
+External imports (third-party libs) are listed per-unit for the L1
+refinement step.
 
 ## Workflow
 
