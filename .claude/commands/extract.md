@@ -1,10 +1,9 @@
 ---
-description: Clone target repo and run pyreverse + pydeps extractors
+description: Clone target repo and run the multi-language unit + import extractor
 argument-hint: <github-url-or-local-path>
 ---
 
-Run the extractor and seeder in sequence on `$ARGUMENTS`, then summarize what
-was found (packages, class count, top external imports).
+Run extractor + seeder in sequence on `$ARGUMENTS`.
 
 ```bash
 python scripts/extract.py $ARGUMENTS --out build/raw
@@ -12,7 +11,8 @@ python scripts/seed_structurizr.py build/raw --out out/workspace.dsl
 ```
 
 After both succeed, read `build/raw/manifest.json` and report:
-- target repo
-- list of packages detected
-- number of `.mmd` class diagrams produced
-- next suggested step (`/l4`)
+- languages detected
+- count of units per language
+- cross-unit edges (from `units[*].cross_unit_to`)
+- top externals per unit (for L1 refinement)
+- next suggested step (`/l3`)

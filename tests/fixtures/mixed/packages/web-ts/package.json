@@ -1,0 +1,9 @@
+{
+  "name": "@acme/web",
+  "version": "0.1.0",
+  "dependencies": {
+    "react": "^18.0.0",
+    "axios": "^1.6.0",
+    "@acme/shared": "workspace:*"
+  }
+}

@@ -1,3 +1,2 @@
-pylint>=3.0          # provides pyreverse for class diagrams
-pydeps>=3.0          # module-level dependency graph
-gitpython>=3.1       # programmatic git clone
+# Runtime has no external Python deps — extractor and seeder are stdlib-only.
+# Keep this file so `pip install -r requirements.txt` is a valid no-op.

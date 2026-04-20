@@ -1,16 +1,14 @@
-"""Seed a Structurizr DSL workspace from extract.py output.
+"""Seed a Structurizr DSL workspace from the multi-language manifest.
 
-Strategy:
-  - One softwareSystem named after the repo.
-  - One container per top-level Python package (from manifest.json).
-  - Components stubbed from each package's immediate subpackages/submodules.
-  - Pre-baked views for systemContext (L1), container (L2), and one
-    component view (L3) per container.
-  - Class-level (L4) lives outside the DSL: keep the pyreverse Mermaid
-    files in build/raw/classes/ and link them from the docs section.
+For each detected unit (Go module / npm package / Python package) we create
+one Structurizr container with a per-language `technology` tag. Components
+are stubbed from the unit's subdirs/modules. Cross-unit imports become
+container-to-container relationships.
 
-The seed is intentionally rough — Claude refines it interactively
-via /l4 → /l3 → /l2 → /l1 slash commands.
+External dependencies from `imports/*.json` are NOT materialized into L1
+software systems here — that's the job of /l1 (the LLM refines them into
+the right external systems: DBs, APIs, queues, etc.). We just surface a
+commented list per unit to guide the refinement.
 """
 
 from __future__ import annotations
@@ -20,88 +18,100 @@ import json
 import re
 from pathlib import Path
 
+TECH_LABEL = {
+    "python": "Python",
+    "typescript": "TypeScript",
+    "javascript": "JavaScript",
+    "go": "Go",
+}
 
-def slug(name: str) -> str:
-    s = re.sub(r"[^a-zA-Z0-9]+", "_", name).strip("_")
-    return s or "x"
+
+def _slug(name: str) -> str:
+    return re.sub(r"[^a-zA-Z0-9]+", "_", name).strip("_") or "x"
 
 
-def detect_components(pkg_dir: Path) -> list[str]:
-    if not pkg_dir.is_dir():
-        return []
-    comps: list[str] = []
-    for child in sorted(pkg_dir.iterdir()):
-        if child.name.startswith("_") or child.name.startswith("."):
-            continue
-        if child.is_dir() and (child / "__init__.py").exists():
-            comps.append(child.name)
-        elif child.suffix == ".py" and child.stem != "__init__":
-            comps.append(child.stem)
-    return comps[:30]  # cap; refinement will prune
+def _sys_id(repo_name: str, units: list[dict]) -> str:
+    base = _slug(repo_name)
+    taken = {u["id"] for u in units}
+    if base in taken:
+        return base + "_sys"
+    return base
 
 
 def emit(raw_dir: Path, out_path: Path) -> None:
     manifest = json.loads((raw_dir / "manifest.json").read_text())
-    src_root = Path(manifest["source"])
+    units = manifest["units"]
     repo_name = Path(manifest["repo"].rstrip("/")).name.replace(".git", "")
-    sys_id = slug(repo_name)
+    sys_id = _sys_id(repo_name, units)
 
-    lines: list[str] = []
-    lines.append(f'workspace "{repo_name}" "Reverse-engineered C4 model" {{')
-    lines.append("")
-    lines.append("    model {")
-    lines.append('        user = person "User" "Primary actor (refine in L1)"')
-    lines.append(
+    out: list[str] = []
+    out.append(f'workspace "{repo_name}" "Reverse-engineered C4 model" {{')
+    out.append("")
+    out.append("    model {")
+    out.append('        user = person "User" "Primary actor (refine in L1)"')
+    out.append(
         f'        {sys_id} = softwareSystem "{repo_name}" '
         f'"Reverse-engineered from {manifest["repo"]}" {{'
     )
 
-    container_ids: list[str] = []
-    for pkg in manifest["packages"]:
-        cid = slug(pkg) + "_pkg"
-        if cid == sys_id:  # extra safety
-            cid = cid + "_c"
-        container_ids.append(cid)
-        lines.append(
-            f'            {cid} = container "{pkg}" '
-            f'"Python package" "Python" {{'
+    # containers
+    for u in units:
+        tech = TECH_LABEL.get(u["language"], u["language"])
+        desc = f"{u['language']} unit at {u['path']} ({u['files']} files)"
+        out.append(
+            f'            {u["id"]} = container "{u["package_name"]}" '
+            f'"{desc}" "{tech}" {{'
         )
-        # find package on disk
-        pkg_path = next(
-            (p for p in src_root.rglob(pkg) if p.is_dir() and (p / "__init__.py").exists()),
-            None,
-        )
-        for comp in detect_components(pkg_path) if pkg_path else []:
-            lines.append(
-                f'                {cid}_{slug(comp)} = component "{comp}" '
-                f'"Module/subpackage" "Python"'
+        for comp in u.get("component_dirs", []):
+            cid = f'{u["id"]}_{_slug(comp)}'
+            out.append(
+                f'                {cid} = component "{comp}" '
+                f'"Module/subpackage" "{tech}"'
             )
-        lines.append("            }")
-    lines.append("        }")
-    lines.append("        user -> " + sys_id + ' "Uses"')
-    lines.append("    }")
-    lines.append("")
-    lines.append("    views {")
-    lines.append(f"        systemContext {sys_id} L1 {{")
-    lines.append("            include *")
-    lines.append("            autolayout lr")
-    lines.append("        }")
-    lines.append(f"        container {sys_id} L2 {{")
-    lines.append("            include *")
-    lines.append("            autolayout lr")
-    lines.append("        }")
-    for cid in container_ids:
-        lines.append(f"        component {cid} L3_{cid} {{")
-        lines.append("            include *")
-        lines.append("            autolayout lr")
-        lines.append("        }")
-        # theme intentionally omitted: validator fetches over HTTP and breaks
-        # offline. Add `theme default` later if you want styling.
-    lines.append("    }")
-    lines.append("}")
+        # hint: external deps to be promoted to L1 softwareSystems
+        externals = u.get("external_sample", [])
+        if externals:
+            out.append(
+                "                // externals to consider for L1: "
+                + ", ".join(externals[:8])
+            )
+        out.append("            }")
+    out.append("        }")
+
+    # cross-unit relationships
+    seen_rel: set[tuple[str, str]] = set()
+    for u in units:
+        for dest in u.get("cross_unit_to", []):
+            edge = (u["id"], dest)
+            if edge in seen_rel or u["id"] == dest:
+                continue
+            seen_rel.add(edge)
+            out.append(f'        {u["id"]} -> {dest} "imports from"')
+
+    out.append(f'        user -> {sys_id} "Uses"')
+    out.append("    }")
+    out.append("")
+    out.append("    views {")
+    out.append(f"        systemContext {sys_id} L1 {{")
+    out.append("            include *")
+    out.append("            autolayout lr")
+    out.append("        }")
+    out.append(f"        container {sys_id} L2 {{")
+    out.append("            include *")
+    out.append("            autolayout lr")
+    out.append("        }")
+    for u in units:
+        if u.get("component_dirs"):
+            out.append(f'        component {u["id"]} L3_{u["id"]} {{')
+            out.append("            include *")
+            out.append("            autolayout lr")
+            out.append("        }")
+    # theme intentionally omitted (validator fetches it over HTTP).
+    out.append("    }")
+    out.append("}")
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    out_path.write_text("\n".join(lines) + "\n")
+    out_path.write_text("\n".join(out) + "\n")
     print(f"wrote {out_path}")
 
 
